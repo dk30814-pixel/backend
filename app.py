@@ -10,7 +10,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Hugging Face API configuration
-HF_API_URL = "https://api-inference.huggingface.co/models/nateraw/food"
+HF_API_URL = "https://router.huggingface.co"
 HF_API_TOKEN = os.environ.get('HF_API_TOKEN', '')  # Set this in your environment
 
 # Food database with prices (MKD - Macedonian Denar)
