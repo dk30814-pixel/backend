@@ -3,8 +3,6 @@ from flask_cors import CORS
 import requests
 import base64
 import io
-from PIL import Image
-import json
 from datetime import datetime
 import os
 

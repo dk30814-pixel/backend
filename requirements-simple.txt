@@ -1,0 +1,7 @@
+# Alternative requirements.txt (use if main one fails)
+# This doesn't need Pillow since we're just passing bytes to Hugging Face
+
+Flask>=3.0.0
+flask-cors>=5.0.0
+requests>=2.32.0
+gunicorn>=23.0.0
