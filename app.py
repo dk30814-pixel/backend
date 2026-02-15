@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
-import requests
-import base64
+from huggingface_hub import InferenceClient
 import io
 from datetime import datetime
 import os
@@ -10,12 +9,21 @@ import sys
 app = Flask(__name__)
 CORS(app)
 
-# Hugging Face API configuration
-HF_API_URL = "https://router.huggingface.co/hf-inference/models/AventIQ-AI/Food-Classification-AI-Model"
-HF_API_TOKEN = os.environ.get('HF_API_TOKEN', '')  # Set this in your environment
+# Hugging Face configuration
+HF_API_TOKEN = os.environ.get('HF_API_TOKEN', '')
 
 print(f"[STARTUP] HF_API_TOKEN is set: {bool(HF_API_TOKEN)}", file=sys.stderr)
-print(f"[STARTUP] HF_API_URL: {HF_API_URL}", file=sys.stderr)
+
+# Initialize Hugging Face InferenceClient
+try:
+    client = InferenceClient(
+        provider="hf-inference",
+        api_key=HF_API_TOKEN
+    )
+    print(f"[STARTUP] InferenceClient initialized successfully", file=sys.stderr)
+except Exception as e:
+    print(f"[STARTUP] ERROR initializing client: {e}", file=sys.stderr)
+    client = None
 
 # Food database with prices (MKD - Macedonian Denar)
 FOOD_DATABASE = {
@@ -30,6 +38,7 @@ FOOD_DATABASE = {
     "fish": {"price": 300, "calories": 206, "protein": 22, "carbs": 0, "fat": 12},
     "soup": {"price": 100, "calories": 71, "protein": 4, "carbs": 9, "fat": 2},
     "french fries": {"price": 90, "calories": 312, "protein": 3.4, "carbs": 41, "fat": 15},
+    "fries": {"price": 90, "calories": 312, "protein": 3.4, "carbs": 41, "fat": 15},
     "bread": {"price": 30, "calories": 265, "protein": 9, "carbs": 49, "fat": 3.2},
     "cheese": {"price": 60, "calories": 402, "protein": 25, "carbs": 1.3, "fat": 33},
     "tomato": {"price": 40, "calories": 18, "protein": 0.9, "carbs": 3.9, "fat": 0.2},
@@ -51,6 +60,7 @@ FOOD_DATABASE = {
     "sushi": {"price": 350, "calories": 143, "protein": 6, "carbs": 21, "fat": 3.5},
     "taco": {"price": 160, "calories": 226, "protein": 9, "carbs": 20, "fat": 13},
     "hot dog": {"price": 110, "calories": 290, "protein": 10, "carbs": 23, "fat": 18},
+    "hotdog": {"price": 110, "calories": 290, "protein": 10, "carbs": 23, "fat": 18},
     "bacon": {"price": 95, "calories": 541, "protein": 37, "carbs": 1.4, "fat": 42},
     "sausage": {"price": 140, "calories": 301, "protein": 12, "carbs": 1.5, "fat": 27},
     "mushroom": {"price": 85, "calories": 22, "protein": 3.1, "carbs": 3.3, "fat": 0.3},
@@ -59,39 +69,49 @@ FOOD_DATABASE = {
     "cucumber": {"price": 45, "calories": 16, "protein": 0.7, "carbs": 3.6, "fat": 0.1},
     "carrot": {"price": 40, "calories": 41, "protein": 0.9, "carbs": 10, "fat": 0.2},
     "broccoli": {"price": 70, "calories": 34, "protein": 2.8, "carbs": 7, "fat": 0.4},
+    "steak": {"price": 350, "calories": 271, "protein": 25, "carbs": 0, "fat": 19},
+    "meat": {"price": 250, "calories": 250, "protein": 26, "carbs": 0, "fat": 15},
+    "vegetables": {"price": 120, "calories": 65, "protein": 3, "carbs": 13, "fat": 0.4},
+    "fruit": {"price": 60, "calories": 60, "protein": 0.5, "carbs": 15, "fat": 0.2},
 }
 
 def query_huggingface(image_bytes):
-    """Query Hugging Face API for food recognition"""
-    print(f"[HF] Starting query to Hugging Face", file=sys.stderr)
+    """Query Hugging Face API for food recognition using official client"""
+    print(f"[HF] Starting query with InferenceClient", file=sys.stderr)
     print(f"[HF] Image size: {len(image_bytes)} bytes", file=sys.stderr)
-    print(f"[HF] Token present: {bool(HF_API_TOKEN)}", file=sys.stderr)
     
-    headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
+    if not client:
+        print(f"[HF] ERROR: Client not initialized", file=sys.stderr)
+        return None
     
     try:
-        print(f"[HF] Sending POST request to {HF_API_URL}", file=sys.stderr)
-        response = requests.post(HF_API_URL, headers=headers, data=image_bytes, timeout=30)
-        print(f"[HF] Response status: {response.status_code}", file=sys.stderr)
-        print(f"[HF] Response headers: {dict(response.headers)}", file=sys.stderr)
+        # Create file-like object from bytes
+        image_file = io.BytesIO(image_bytes)
+        image_file.name = "image.jpg"  # Set a name for the file object
         
-        if response.status_code != 200:
-            print(f"[HF] ERROR Response text: {response.text}", file=sys.stderr)
+        print(f"[HF] Calling image_classification on nateraw/food model", file=sys.stderr)
         
-        response.raise_for_status()
-        result = response.json()
+        # Call the image classification API
+        predictions = client.image_classification(
+            image=image_file,
+            model="nateraw/food"
+        )
+        
+        print(f"[HF] Raw predictions: {predictions}", file=sys.stderr)
+        
+        # Convert to expected format if needed
+        if isinstance(predictions, list):
+            result = [{"label": p.get("label", ""), "score": p.get("score", 0)} for p in predictions]
+        else:
+            result = predictions
+            
         print(f"[HF] Success! Got {len(result)} predictions", file=sys.stderr)
         return result
-    except requests.exceptions.Timeout as e:
-        print(f"[HF] ERROR Timeout: {e}", file=sys.stderr)
-        return None
-    except requests.exceptions.RequestException as e:
-        print(f"[HF] ERROR Request exception: {e}", file=sys.stderr)
-        if hasattr(e, 'response') and e.response is not None:
-            print(f"[HF] ERROR Response text: {e.response.text}", file=sys.stderr)
-        return None
+        
     except Exception as e:
-        print(f"[HF] ERROR Unexpected: {e}", file=sys.stderr)
+        print(f"[HF] ERROR: {type(e).__name__}: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
         return None
 
 def match_food_items(predictions):
