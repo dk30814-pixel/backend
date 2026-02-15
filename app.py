@@ -5,6 +5,7 @@ import base64
 import io
 from datetime import datetime
 import os
+import sys
 
 app = Flask(__name__)
 CORS(app)
@@ -12,6 +13,9 @@ CORS(app)
 # Hugging Face API configuration
 HF_API_URL = "https://router.huggingface.co"
 HF_API_TOKEN = os.environ.get('HF_API_TOKEN', '')  # Set this in your environment
+
+print(f"[STARTUP] HF_API_TOKEN is set: {bool(HF_API_TOKEN)}", file=sys.stderr)
+print(f"[STARTUP] HF_API_URL: {HF_API_URL}", file=sys.stderr)
 
 # Food database with prices (MKD - Macedonian Denar)
 FOOD_DATABASE = {
@@ -59,24 +63,47 @@ FOOD_DATABASE = {
 
 def query_huggingface(image_bytes):
     """Query Hugging Face API for food recognition"""
+    print(f"[HF] Starting query to Hugging Face", file=sys.stderr)
+    print(f"[HF] Image size: {len(image_bytes)} bytes", file=sys.stderr)
+    print(f"[HF] Token present: {bool(HF_API_TOKEN)}", file=sys.stderr)
+    
     headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
     
     try:
+        print(f"[HF] Sending POST request to {HF_API_URL}", file=sys.stderr)
         response = requests.post(HF_API_URL, headers=headers, data=image_bytes, timeout=30)
+        print(f"[HF] Response status: {response.status_code}", file=sys.stderr)
+        print(f"[HF] Response headers: {dict(response.headers)}", file=sys.stderr)
+        
+        if response.status_code != 200:
+            print(f"[HF] ERROR Response text: {response.text}", file=sys.stderr)
+        
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        print(f"[HF] Success! Got {len(result)} predictions", file=sys.stderr)
+        return result
+    except requests.exceptions.Timeout as e:
+        print(f"[HF] ERROR Timeout: {e}", file=sys.stderr)
+        return None
     except requests.exceptions.RequestException as e:
-        print(f"Error querying Hugging Face: {e}")
+        print(f"[HF] ERROR Request exception: {e}", file=sys.stderr)
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"[HF] ERROR Response text: {e.response.text}", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"[HF] ERROR Unexpected: {e}", file=sys.stderr)
         return None
 
 def match_food_items(predictions):
     """Match predictions to food database"""
+    print(f"[MATCH] Matching predictions to database", file=sys.stderr)
     matched_items = []
     seen_foods = set()
     
     for pred in predictions[:10]:  # Check top 10 predictions
         label = pred.get('label', '').lower()
         score = pred.get('score', 0)
+        print(f"[MATCH] Checking: {label} (score: {score})", file=sys.stderr)
         
         # Try to match with database
         for food_key in FOOD_DATABASE.keys():
@@ -86,10 +113,12 @@ def match_food_items(predictions):
                 food_info['confidence'] = round(score * 100, 2)
                 matched_items.append(food_info)
                 seen_foods.add(food_key)
+                print(f"[MATCH] MATCHED: {food_key}", file=sys.stderr)
                 break
     
     # If no matches found, return most common canteen items
     if not matched_items:
+        print(f"[MATCH] No matches found, using defaults", file=sys.stderr)
         default_items = ['rice', 'chicken', 'salad']
         for item in default_items:
             food_info = FOOD_DATABASE[item].copy()
@@ -97,6 +126,7 @@ def match_food_items(predictions):
             food_info['confidence'] = 85.0
             matched_items.append(food_info)
     
+    print(f"[MATCH] Total matched items: {len(matched_items)}", file=sys.stderr)
     return matched_items
 
 def calculate_totals(items):
@@ -274,24 +304,37 @@ def health():
 @app.route('/analyze', methods=['POST'])
 def analyze_food():
     """Analyze food image and return results"""
+    print(f"\n[ANALYZE] ========== NEW REQUEST ==========", file=sys.stderr)
     try:
         if 'image' not in request.files:
+            print(f"[ANALYZE] ERROR: No image in request", file=sys.stderr)
             return jsonify({"error": "No image provided"}), 400
         
         image_file = request.files['image']
+        print(f"[ANALYZE] Image filename: {image_file.filename}", file=sys.stderr)
         image_bytes = image_file.read()
+        print(f"[ANALYZE] Image size: {len(image_bytes)} bytes", file=sys.stderr)
         
         # Query Hugging Face API
+        print(f"[ANALYZE] Calling Hugging Face API...", file=sys.stderr)
         predictions = query_huggingface(image_bytes)
         
         if not predictions:
-            return jsonify({"error": "Failed to analyze image"}), 500
+            print(f"[ANALYZE] ERROR: No predictions returned from HF", file=sys.stderr)
+            return jsonify({
+                "error": "Failed to analyze image", 
+                "details": "Hugging Face API returned no predictions. Check backend logs."
+            }), 500
+        
+        print(f"[ANALYZE] Got {len(predictions)} predictions from HF", file=sys.stderr)
         
         # Match predictions to food database
         matched_items = match_food_items(predictions)
+        print(f"[ANALYZE] Matched {len(matched_items)} items", file=sys.stderr)
         
         # Calculate totals
         totals = calculate_totals(matched_items)
+        print(f"[ANALYZE] Calculated totals: {totals}", file=sys.stderr)
         
         # Generate timestamp
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -299,6 +342,7 @@ def analyze_food():
         # Generate receipt HTML
         receipt_html = generate_receipt_html(matched_items, totals, timestamp)
         
+        print(f"[ANALYZE] SUCCESS! Returning results", file=sys.stderr)
         return jsonify({
             "success": True,
             "items": matched_items,
@@ -308,8 +352,14 @@ def analyze_food():
         })
     
     except Exception as e:
-        print(f"Error in analyze_food: {e}")
-        return jsonify({"error": str(e)}), 500
+        print(f"[ANALYZE] ERROR Exception: {type(e).__name__}: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        return jsonify({
+            "error": "Failed to analyze image",
+            "details": str(e),
+            "type": type(e).__name__
+        }), 500
 
 @app.route('/download-receipt', methods=['POST'])
 def download_receipt():
@@ -336,7 +386,7 @@ def download_receipt():
         )
     
     except Exception as e:
-        print(f"Error in download_receipt: {e}")
+        print(f"Error in download_receipt: {e}", file=sys.stderr)
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
