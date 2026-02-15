@@ -11,7 +11,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Hugging Face API configuration
-HF_API_URL = "https://router.huggingface.co/models/nateraw/food"
+HF_API_URL = "https://router.huggingface.co/models/Kaludi/food-category-classification-v2.0"
 HF_API_TOKEN = os.environ.get('HF_API_TOKEN', '')  # Set this in your environment
 
 print(f"[STARTUP] HF_API_TOKEN is set: {bool(HF_API_TOKEN)}", file=sys.stderr)
