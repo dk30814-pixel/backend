@@ -5,14 +5,68 @@ import io
 from datetime import datetime
 import os
 import sys
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 app = Flask(__name__)
 CORS(app)
+
+# Database configuration
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
+
+# Initialize database connection
+def get_db_connection():
+    """Get database connection"""
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        return conn
+    except Exception as e:
+        print(f"[DB] ERROR connecting: {e}", file=sys.stderr)
+        return None
+
+# Initialize database tables
+def init_db():
+    """Initialize database tables if they don't exist"""
+    conn = get_db_connection()
+    if not conn:
+        print(f"[DB] ERROR: Could not initialize database", file=sys.stderr)
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS food_transactions (
+                id SERIAL PRIMARY KEY,
+                food_name VARCHAR(100) NOT NULL,
+                price DECIMAL(10,2) NOT NULL,
+                calories DECIMAL(10,2) NOT NULL,
+                protein DECIMAL(10,2) NOT NULL,
+                carbs DECIMAL(10,2) NOT NULL,
+                fat DECIMAL(10,2) NOT NULL,
+                confidence DECIMAL(5,2) NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+            
+            CREATE INDEX IF NOT EXISTS idx_created_at ON food_transactions(created_at);
+            CREATE INDEX IF NOT EXISTS idx_food_name ON food_transactions(food_name);
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+        print(f"[DB] Database initialized successfully", file=sys.stderr)
+    except Exception as e:
+        print(f"[DB] ERROR initializing: {e}", file=sys.stderr)
+        if conn:
+            conn.close()
 
 # Hugging Face configuration
 HF_API_TOKEN = os.environ.get('HF_API_TOKEN', '')
 
 print(f"[STARTUP] HF_API_TOKEN is set: {bool(HF_API_TOKEN)}", file=sys.stderr)
+print(f"[STARTUP] DATABASE_URL is set: {bool(DATABASE_URL)}", file=sys.stderr)
+
+# Initialize database
+init_db()
 
 # Initialize Hugging Face InferenceClient
 try:
@@ -172,6 +226,40 @@ def calculate_totals(items):
         'total_carbs': round(total_carbs, 1),
         'total_fat': round(total_fat, 1)
     }
+
+def save_transaction(items):
+    """Save transaction items to database"""
+    conn = get_db_connection()
+    if not conn:
+        print(f"[DB] ERROR: Could not save transaction", file=sys.stderr)
+        return False
+    
+    try:
+        cur = conn.cursor()
+        for item in items:
+            cur.execute("""
+                INSERT INTO food_transactions 
+                (food_name, price, calories, protein, carbs, fat, confidence)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (
+                item['name'],
+                item['price'],
+                item['calories'],
+                item['protein'],
+                item['carbs'],
+                item['fat'],
+                item['confidence']
+            ))
+        conn.commit()
+        cur.close()
+        conn.close()
+        print(f"[DB] Saved {len(items)} items to database", file=sys.stderr)
+        return True
+    except Exception as e:
+        print(f"[DB] ERROR saving transaction: {e}", file=sys.stderr)
+        if conn:
+            conn.close()
+        return False
 
 def generate_receipt_html(items, totals, timestamp):
     """Generate HTML receipt"""
@@ -363,6 +451,9 @@ def analyze_food():
         # Calculate totals
         totals = calculate_totals(matched_items)
         print(f"[ANALYZE] Calculated totals: {totals}", file=sys.stderr)
+        
+        # Save to database
+        save_transaction(matched_items)
         
         # Generate timestamp
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
