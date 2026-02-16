@@ -16,7 +16,10 @@ print(f"[STARTUP] HF_API_TOKEN is set: {bool(HF_API_TOKEN)}", file=sys.stderr)
 
 # Initialize Hugging Face InferenceClient
 try:
-    client = InferenceClient(api_key=HF_API_TOKEN)
+    client = InferenceClient(
+        provider="hf-inference",
+        api_key=HF_API_TOKEN
+    )
     print(f"[STARTUP] InferenceClient initialized successfully", file=sys.stderr)
 except Exception as e:
     print(f"[STARTUP] ERROR initializing client: {e}", file=sys.stderr)
