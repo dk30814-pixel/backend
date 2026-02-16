@@ -87,22 +87,34 @@ def query_huggingface(image_bytes):
     try:
         print(f"[HF] Calling image_classification on nateraw/food model", file=sys.stderr)
         
-        # Call the image classification API with raw bytes
-        predictions = client.image_classification(
-            image=image_bytes,  # Pass raw bytes directly, not BytesIO
-            model="nateraw/food"
-        )
+        # Save bytes to temporary file for API
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
+            tmp_file.write(image_bytes)
+            tmp_path = tmp_file.name
         
-        print(f"[HF] Raw predictions: {predictions}", file=sys.stderr)
-        
-        # Convert to expected format if needed
-        if isinstance(predictions, list):
-            result = [{"label": p.get("label", ""), "score": p.get("score", 0)} for p in predictions]
-        else:
-            result = predictions
+        try:
+            # Call the image classification API with file path
+            predictions = client.image_classification(
+                image=tmp_path,
+                model="nateraw/food"
+            )
             
-        print(f"[HF] Success! Got {len(result)} predictions", file=sys.stderr)
-        return result
+            print(f"[HF] Raw predictions: {predictions}", file=sys.stderr)
+            
+            # Convert to expected format if needed
+            if isinstance(predictions, list):
+                result = [{"label": p.get("label", ""), "score": p.get("score", 0)} for p in predictions]
+            else:
+                result = predictions
+                
+            print(f"[HF] Success! Got {len(result)} predictions", file=sys.stderr)
+            return result
+        finally:
+            # Clean up temp file
+            import os
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
         
     except Exception as e:
         print(f"[HF] ERROR: {type(e).__name__}: {e}", file=sys.stderr)
