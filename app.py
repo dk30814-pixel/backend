@@ -85,15 +85,11 @@ def query_huggingface(image_bytes):
         return None
     
     try:
-        # Create file-like object from bytes
-        image_file = io.BytesIO(image_bytes)
-        image_file.name = "image.jpg"  # Set a name for the file object
-        
         print(f"[HF] Calling image_classification on nateraw/food model", file=sys.stderr)
         
-        # Call the image classification API
+        # Call the image classification API with raw bytes
         predictions = client.image_classification(
-            image=image_file,
+            image=image_bytes,  # Pass raw bytes directly, not BytesIO
             model="nateraw/food"
         )
         
